@@ -15,7 +15,11 @@ Destaque intencionalmente:
 
 ## 3. Demonstração das vulnerabilidades
 
-Mostrar as partes vulneráveis do código (referenciando com alguma documentação importante do FastAPI)
+A API possui duas falhas clássicas de controle de acesso:
+
+- IDOR (Insecure Direct Object Reference): No endpoint GET /documents/{doc_id}, o sistema verifica se o usuário forneceu um token de autorização, mas não valida se o documento solicitado pertence àquele usuário. A API apenas busca o ID no banco e retorna.
+
+- Escalonamento de Privilégio Vertical: No endpoint GET /admin/users, qualquer usuário logado consegue visualizar a lista de todos os usuários do sistema, pois a rota não verifica o papel (role) do requisitante para garantir que ele é um administrador.
 
 ## 4. Análise de Dependências (SCA) com pip-audit
 
@@ -42,4 +46,14 @@ Análise Crítica: Ferramentas SAST procuram por padrões de sintaxe ruins (como
 
 Esse artigo da OWASP TOP TEN explica bem o motivo pelo qual ferramentas não conseguem identificar erros em regras de negócio: https://owasp.org/www-project-top-ten/2017/A5_2017-Broken_Access_Control
 
-## 
+## 6. O Falso Negativo na Varredura Dinâmica (DAST Automatizado)
+
+Para esgotar as tentativas automatizadas, a API foi submetida a uma varredura ativa (Active Scan) pelo OWASP ZAP, guiada pela documentação Swagger (openapi.json) do FastAPI.
+
+- Resultado: O scanner disparou centenas de payloads contra a API, mas identificou apenas uma vulnerabilidade de Risco Baixo (ausência do cabeçalho X-Content-Type-Options) (inserir imagem: Resultado-ataque-dast.png).
+
+- Análise Crítica: Mais uma vez, ocorreu um falso negativo para a nossa vulnerabilidade crítica. Scanners DAST automatizados não conseguem realizar ataques complexos de IDOR sozinhos porque eles não compreendem a semântica dos dados. O robô não sabe que o "user2" e o "user1" são entidades distintas e que os dados de um não podem ser lidos pelo outro. Desde que o servidor retorne o Status HTTP 200 OK (sem travar a aplicação), a automação considera o comportamento normal.
+
+## 7. A Intervenção Humana: Explorando o IDOR Manualmente (O Ataque)
+
+Como as ferramentas automatizadas falharam em todas as camadas (SCA, SAST e DAST), a vulnerabilidade só pôde ser detectada através de Pentest Manual, utilizando o OWASP ZAP não como um scanner cego, mas como um Proxy de Interceptação.
