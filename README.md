@@ -117,6 +117,30 @@ def read_document(doc_id: int, current_user: dict = Depends(get_current_user)):
     return {"doc_id": doc_id, "content": doc["content"]}
 ```
 
+### 8.1 Validação da Correção (Re-teste Manual)
+
+Para comprovar a eficácia da mitigação implementada no código, o mesmo cenário de ataque manual (Pentest) foi repetido contra a nova versão segura da API.
+
+O objetivo foi verificar se o sistema agora é capaz de bloquear a tentativa de um usuário logado acessar o recurso de outro, validando não apenas a identidade, mas a autorização baseada na posse do dado.
+
+Execução do Re-teste:
+
+1. A Nova Tentativa de Ataque: Utilizando o ZAP, forjamos exatamente a mesma requisição anterior. Solicitamos o endpoint do documento da Alice (/documents/101), mas injetamos o token do atacante (Authorization: Bearer user2).
+
+    - (Inserir imagem: Requisicao-codigo-corrigido.jpg).
+
+2. A Defesa Ativa do Sistema: Diferente da versão vulnerável, a nova arquitetura acionou a dependência de validação de posse antes de processar a resposta. O sistema identificou que o owner_id (1) era diferente do id do usuário requisitante (2) e interrompeu a execução.
+
+    - (Inserir imagem: Resposta-codigo-corrigido.jpg).
+
+3. Análise do Novo Resultado: O servidor rejeitou o ataque e retornou adequadamente o código de status HTTP/1.1 403 Forbidden (Acesso Negado), entregando o seguinte payload de erro, sem vazar nenhum dado sensível:
+
+    ```bash
+    {"detail": "You do not have access to this document"}
+    ```
+
+Conclusão da Validação: A resposta 403 Forbidden atesta que a vulnerabilidade de Broken Access Control (IDOR) foi remediada com sucesso. O sistema agora aplica corretamente o princípio de Negar por Padrão, garantindo a confidencialidade das informações mesmo que um atacante consiga manipular os parâmetros das requisições HTTP.
+
 ## 9. Conclusão Final
 
 O desenvolvimento deste estudo evidenciou que um pipeline DevSecOps maduro necessita de uma abordagem em múltiplas camadas. Ferramentas de análise de composição (SCA) e testes estáticos (SAST) são vitais para mitigar componentes defasados e erros de sintaxe. No entanto, o Broken Access Control (A01:2021) lidera os riscos de segurança globais justamente por ser invisível a essas automações.
