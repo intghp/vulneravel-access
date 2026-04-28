@@ -1,8 +1,8 @@
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Depends
 from pydantic import BaseModel
 from typing import List, Optional
 
-app = FastAPI(title="Vulnerable Docs API")
+app = FastAPI(title="Secure Docs API")
 
 # --- BANCO DE DADOS FALSO ---
 users_db = {
@@ -22,36 +22,35 @@ class Document(BaseModel):
     id: int
     content: str
 
-# --- DEPENDÊNCIA VULNERÁVEL DE AUTENTICAÇÃO ---
 def get_current_user(authorization: str = Header(...)):
-    """Simula uma verificação de token. Lê o usuário diretamente do header."""
     user_id = authorization.replace("Bearer ", "")
     if user_id not in users_db:
         raise HTTPException(status_code=401, detail="Unauthorized")
     return users_db[user_id]
 
-# --- ENDPOINTS COM BROKEN ACCESS CONTROL ---
+# --- DEPENDÊNCIA NOVA: VALIDAÇÃO DE ADMIN ---
+def get_current_admin(current_user: dict = Depends(get_current_user)):
+    if current_user["role"] != "admin":
+        # Retornamos 403 Forbidden para erros de permissão
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+    return current_user
+
+# --- ENDPOINTS CORRIGIDOS ---
 
 @app.get("/documents/{doc_id}")
-def read_document(doc_id: int, authorization: str = Header(...)):
-    """
-    VULNERABILIDADE 1: IDOR (Insecure Direct Object Reference)
-    O sistema verifica se o usuário está logado, mas não verifica se o 
-    documento pertence a ele.
-    """
-    get_current_user(authorization) # Apenas checa se está logado
-    
+def read_document(doc_id: int, current_user: dict = Depends(get_current_user)):
     doc = documents_db.get(doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     
+    # CORREÇÃO DA VULN 1 (IDOR): Verificação estrita de posse!
+    # Se o usuário não for o dono E não for admin, acesso negado.
+    if doc["owner_id"] != current_user["id"] and current_user["role"] != "admin":
+         raise HTTPException(status_code=403, detail="You do not have access to this document")
+    
     return {"doc_id": doc_id, "content": doc["content"]}
 
 @app.get("/admin/users")
-def get_all_users(authorization: str = Header(...)):
-    """
-    VULNERABILIDADE 2: Falta de Validação de Permissão (Role)
-    Qualquer usuário logado consegue acessar uma rota administrativa.
-    """
-    get_current_user(authorization) # Falha: não verifica se role == 'admin'
+# CORREÇÃO DA VULN 2: Usar a dependência que força a checagem do papel (Role)
+def get_all_users(admin_user: dict = Depends(get_current_admin)):
     return {"users": users_db}
