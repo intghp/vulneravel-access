@@ -56,4 +56,69 @@ Para esgotar as tentativas automatizadas, a API foi submetida a uma varredura at
 
 ## 7. A Intervenção Humana: Explorando o IDOR Manualmente (O Ataque)
 
-Como as ferramentas automatizadas falharam em todas as camadas (SCA, SAST e DAST), a vulnerabilidade só pôde ser detectada através de Pentest Manual, utilizando o OWASP ZAP não como um scanner cego, mas como um Proxy de Interceptação.
+Como as ferramentas automatizadas falharam em todas as camadas (SCA, SAST e DAST), a vulnerabilidade só pôde ser detectada através de Pentest Manual, utilizando o OWASP ZAP não como um scanner cego, mas como um Editor/Proxy de Interceptação de requisições.
+
+Para provar a falha de Broken Access Control (IDOR), foi simulado o seguinte cenário de ataque:
+Sabemos que o usuário user1 (Alice) possui um documento confidencial de ID 101. O objetivo do teste é verificar se o usuário user2 (Bob) consegue acessar esse recurso burlando as regras de negócio.
+
+Passo a passo da exploração:
+
+- Forjando a Requisição: Utilizando a interface de requisições manuais do ZAP, enviamos uma chamada HTTP do tipo GET diretamente para o recurso alvo (/documents/101). A manipulação crítica (tampering) ocorreu no cabeçalho HTTP: injetamos intencionalmente o header Authorization: Bearer user2. (Inserir imagem: Requisição.jpg - mostrando o cabeçalho manipulado com o usuário 2).
+
+- A Quebra de Acesso (A Falha Comprovada): O servidor recebeu a requisição, validou que o token existia (ou seja, considerou o usuário 2 como autenticado), mas falhou em validar a "posse" daquele recurso específico. O servidor acatou o comando e processou a devolução dos dados. (Inserir imagem: Resposta.jpg - mostrando o status HTTP 200 OK).
+
+- Vazamento de Dados: Como resultado final, o corpo da resposta entregou os dados de outra pessoa para o atacante, exibindo a seguinte carga útil (payload):
+
+```bash
+{"doc_id": 101, "content": "Declaração de Imposto de Renda da Alice - CONFIDENCIAL"}
+```
+
+Veredito do Teste: O ataque manual foi bem-sucedido. A intervenção e o raciocínio humano foram essenciais para manipular o estado da requisição e provar a falha que a automação ignorou, demonstrando exatamente por que falhas lógicas lideram a lista de maiores riscos em aplicações web.
+
+## 8. Mitigação e Correção de Código
+
+### 1. Correção da Vulnerabilidade 1: Escalonamento de Privilégios (Role)
+
+Para proteger a rota de administradores, foi criada uma nova dependência (get_current_admin) que não apenas verifica se o usuário existe, mas valida se a sua role é estritamente igual a admin.
+
+```bash
+# --- DEPENDÊNCIA NOVA: VALIDAÇÃO DE ADMIN ---
+def get_current_admin(current_user: dict = Depends(get_current_user)):
+    if current_user["role"] != "admin":
+        # Retorna 403 Forbidden para erros de permissão
+        raise HTTPException(status_code=403, detail="Not enough permissions")
+    return current_user
+
+# --- ENDPOINT CORRIGIDO ---
+@app.get("/admin/users")
+def get_all_users(admin_user: dict = Depends(get_current_admin)):
+    return {"users": users_db}
+```
+
+### 2. Correção da Vulnerabilidade 2: IDOR (Insecure Direct Object Reference)
+
+Para mitigar o IDOR, o endpoint /documents/{doc_id} foi reescrito. Agora, a lógica não confia apenas na autenticação, mas implementa uma verificação estrita de posse do recurso (Ownership).
+
+Se o ID do dono do documento (owner_id) for diferente do ID do usuário autenticado (current_user["id"]), o sistema rejeita a requisição, a menos que o usuário seja um administrador.
+
+```bash
+# --- ENDPOINT CORRIGIDO ---
+@app.get("/documents/{doc_id}")
+def read_document(doc_id: int, current_user: dict = Depends(get_current_user)):
+    doc = documents_db.get(doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    
+    # CORREÇÃO DA VULN 1 (IDOR): Verificação estrita de posse!
+    # Se o usuário não for o dono E não for admin, acesso negado.
+    if doc["owner_id"] != current_user["id"] and current_user["role"] != "admin":
+         raise HTTPException(status_code=403, detail="You do not have access to this document")
+    
+    return {"doc_id": doc_id, "content": doc["content"]}
+```
+
+## 9. Conclusão Final
+
+O desenvolvimento deste estudo evidenciou que um pipeline DevSecOps maduro necessita de uma abordagem em múltiplas camadas. Ferramentas de análise de composição (SCA) e testes estáticos (SAST) são vitais para mitigar componentes defasados e erros de sintaxe. No entanto, o Broken Access Control (A01:2021) lidera os riscos de segurança globais justamente por ser invisível a essas automações.
+
+OBS: Extremamente importante encontrar fontes e referências confiáveis que evidenciem a ineficiência dos testes automatizados para as vulnerabilidades de Broken Access Control
